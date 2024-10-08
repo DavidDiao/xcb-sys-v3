@@ -1,0 +1,27 @@
+{
+    "auth": {
+        "授权名": [
+            "用于响应的文本1",
+            "用于响应的文本2"
+        ],
+        "myrzx": [
+            "myrzx",
+            "myrzx_tw"
+        ]
+    },
+    "replace": [
+        {
+            "pattern": "消息替换正则",
+            "replace": "替换内容，支持$1~$9表示匹配内容",
+            "flags": "正则开关，缺省值为ig"
+        },
+        {
+            "pattern": "：",
+            "replace": ":"
+        },
+        {
+            "pattern": "；",
+            "replace": ";"
+        }
+    ]
+}

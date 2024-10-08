@@ -1,0 +1,34 @@
+{
+  "name": "xcb-sys",
+  "version": "3.0.0",
+  "description": "Xiaociba system for CoolQ through https://github.com/richardchien/coolq-http-api",
+  "main": "index.js",
+  "dependencies": {
+    "db-migrate-mysql": "^1.1.10",
+    "dotenv": "^8.1.0",
+    "lodash": "^4.17.15",
+    "log4js": "^5.2.1",
+    "mysql": "^2.17.1",
+    "quick-lru": "^4.0.1"
+  },
+  "devDependencies": {
+    "eslint": "^6.5.1"
+  },
+  "scripts": {},
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DavidDiao/xcb-sys-v3.git"
+  },
+  "keywords": [
+    "coolq",
+    "qq",
+    "qqbot",
+    "qqrobot"
+  ],
+  "author": "DavidDiao",
+  "license": "Apache-2.0",
+  "bugs": {
+    "url": "https://github.com/DavidDiao/xcb-sys-v3/issues"
+  },
+  "homepage": "https://github.com/DavidDiao/xcb-sys-v3#readme"
+}

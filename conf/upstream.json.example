@@ -1,0 +1,9 @@
+[
+    {
+        "host": "localhost",
+        "port": 80,
+        "method": "GET",
+        "path": "/api.php",
+        "auth": ["授权列表，同一个授权不能同时出现在多个upstream中。如果某个群包含多个不同upstream对应的授权，结果将是不可预料的。不接受小窗消息"]
+    }
+]
