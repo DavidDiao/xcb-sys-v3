@@ -24,28 +24,51 @@ function resolveTime(str) {
  */
 function parse(text, userId, groupId, protect = false) {
     let alt;
-    text = text
+    let chain = text
         .replace(/%([\w_]+)%/g, (...match) => _.defaultTo(process.env[match[1]], ''))
-        .replace(/\[(\w+)(?:=(.*?))?(?<!\\)\]/g, (match, cmd, arg) => {
+        .replace(/\[br\]/g, '\n')
+        .match(/\[([^\\\]]|\\.)*?\]|[^[]+/g)
+        .map(str => {
+            if (str[0] !== '[') return {
+                type: 'Plain',
+                text: str,
+            };
+            let match = str.match(/^\[(\w+)(?:=(.*))?\]$/);
+            if (!match) return {
+                type: 'Plain',
+                text: str,
+            };
+            let [_, cmd, arg] = match;
             if (arg) arg = arg.replace(/\\(.)/, '$1');
-            if (cmd == 'br') return '\n';
-            if (cmd == 'img' && arg !== undefined) return `[CQ:image,file=${arg}]`;
-            if (cmd == 'at' && arg !== undefined) return `[CQ:at,qq=${arg}]`;
+            if (cmd == 'img' && !require('fs').existsSync(arg)) return;
+            if (cmd == 'img' && arg !== undefined) return {
+                type: 'Image',
+                path: arg,
+            };
+            if (cmd == 'at' && arg !== undefined) return {
+                type: 'At',
+                target: +arg,
+            };
             if (cmd == 'ban' && arg !== undefined) {
                 let match2 = arg.match(/^([\d:']+)(?:\?(.*?))?$/);
                 if (match2) {
                     let time = resolveTime(match2[1]);
-                    if (time === false) return match;
-                    if (alt !== undefined) return ''; // Only deal with first ban command
+                    if (time === false) return {
+                        type: 'Plain',
+                        text: str,
+                    };
+                    if (alt !== undefined) return; // Only deal with first ban command
                     if (match2[2] !== undefined) {
                         if (protect || !groupId) {
-                            alt = match2[2];
-                            return '';
+                            alt = [{
+                                type: 'Plain',
+                                text: match2[2],
+                            }];
+                            return;
                         }
-                        alt = false;
                     }
-                    blockAndBan(userId, groupId, time);
-                    return '';
+                    if (groupId) blockAndBan(userId, groupId, time);
+                    return;
                 }
             }
             if (cmd == 'pm' && arg !== undefined) {
@@ -56,13 +79,16 @@ function parse(text, userId, groupId, protect = false) {
                         match2[1] += '?' + match2[2];
                         time = 0;
                     }
-                    setSingleSchedule(time * 1000, ['core', 'sendPrivateMessage'], [userId, match2[1]]);
-                    return '';
+                    setSingleSchedule(time * 1000, ['core', 'sendPrivateMessage'], [userId, groupId, match2[1]]);
+                    return;
                 }
             }
-            return match;
+            return {
+                type: 'Plain',
+                text: str,
+            };
         });
-    return alt ? alt : text;
+    return alt || chain.filter(v => v);
 }
 
 exports.parse = parse;

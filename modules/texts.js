@@ -1,8 +1,7 @@
 const _ = require('lodash');
 const fs = require('fs');
 const log4js = require('log4js');
-const QuickLRU = require('quick-lru');
-const { authorized, getActualPermission, sendGroupMessage, onPrivateMessage, onGroupMessage, removeListener } = require('../index');
+const { authorized, sendGroupMessage, onPrivateMessage, onGroupMessage, removeListener } = require('../index');
 const { isBlocked } = require('./admin');
 const { parse } = require('./parser');
 
@@ -10,20 +9,16 @@ let loaded = false;
 let texts = {};
 let groups = {};
 let replaces = [];
-let cache = new QuickLRU({ maxSize: 1024 });
 let lastUpdates = {};
 const logger = log4js.getLogger('texts');
 
 function matchResponse(event, auth, protect) {
-    let index = Infinity, response = [], message = event.message;
+    let index = Infinity, response = [], message = event.messageChain.map(msg => msg.type === 'Plain' ? msg.text
+                                                                               : msg.type === 'Image' ? msg.imageId
+                                                                               : null).join('\n');
     replaces.forEach(value => {
         message = message.replace(value.pattern, value.replace);
     });
-    /*
-    if (cache.has(message)) {
-        response = cache.get(message);
-    } else {
-    */
     auth.forEach(auth => (groups[auth] || []).forEach(category => texts[category].forEach(reply => {
         let match = reply.pattern.exec(message);
         if (match && match.index <= index) {
@@ -33,23 +28,25 @@ function matchResponse(event, auth, protect) {
         }
     })));
     if (!response.length) return false;
-    /*
-        cache.set(message, response);
-    }
-    */
-    return parse(response[_.random(0, response.length - 1)], event.userId, event.groupId, protect);
+    return parse(response[_.random(0, response.length - 1)], event.sender.id, event.sender.group?.id, protect);
+}
+
+function getPermission(permstr) {
+    if (permstr === 'MEMBER') return 0;
+    if (permstr === 'ADMINISTRATOR') return 1;
+    if (permstr === 'OWNER') return 2;
 }
 
 function privateMessageHandler(event) {
     if (isBlocked(event.userId)) return false;
-    const res = matchResponse(event, authorized('user' + event.userId), true);
+    const res = matchResponse(event, ['myrzx'], true);
     if (res === false) return false;
     return res ? res : true;
 }
 
 function groupMessageHandler(event) {
     if (isBlocked(event.userId, event.groupId)) return false;
-    const res = matchResponse(event, authorized('group' + event.groupId), ['member', 'admin', 'owner'].indexOf(event.sender.role) >= getActualPermission(event.selfId, event.groupId));
+    const res = matchResponse(event, authorized('group' + event.sender.group.id), getPermission(event.sender.permission) >= getPermission(event.sender.group.permission));
     if (res === false) return false;
     return res ? res : true;
 }
@@ -65,7 +62,7 @@ function loadFile(fn) {
                 let match = line.match(/\t+/);
                 if (!match || match.index == 0) return;
                 texts[fn].push({
-                    pattern: new RegExp(line.substr(0, match.index), 'i'),
+                    pattern: new RegExp(line.substr(0, match.index), 'mi'),
                     response: line.substr(match.index + match[0].length)
                 });
             });
@@ -108,7 +105,6 @@ function checkUpdate() {
     if (!loaded) return;
     if (fs.statSync('./conf/texts.json').mtime > lastUpdates['/conf']) {
         loadAll().then(() => {
-            cache.clear();
             logger.info('Texts reloaded.');
             sendGroupMessage(732037074, '文本已更新');
             setTimeout(checkUpdate, 1000);
@@ -120,7 +116,6 @@ function checkUpdate() {
         if (fn[0] === '/') continue;
         if (fs.statSync(`./conf/texts/${fn}.txt`).mtime > lastUpdates[fn]) {
             tmp.push(loadFile(fn).then(() => {
-                cache.clear();
                 logger.info(`Text ${fn} reloaded.`);
                 sendGroupMessage(732037074, `文本${fn}已更新`);
                 setTimeout(checkUpdate, 1000);
@@ -134,7 +129,6 @@ exports.load = () => {
     loaded = true;
     onPrivateMessage(privateMessageHandler, 500);
     onGroupMessage(groupMessageHandler, 500);
-    cache.clear();
     return loadAll().then(() => logger.info('Module loaded.'));
 };
 
@@ -146,6 +140,5 @@ exports.unload = () => {
     groups = {};
     lastUpdates = {};
     replaces = [];
-    cache.clear();
     logger.info('Module unloaded.');
 };

@@ -2,7 +2,6 @@ const _ = require('lodash');
 const fs = require('fs');
 const http = require('http');
 const log4js = require('log4js');
-const mysql = require('mysql');
 const process = require('process');
 
 const camelCaseKey = obj => _.mapKeys(obj, _.flow([_.nthArg(1), _.camelCase]));
@@ -34,7 +33,8 @@ let inited = false;
 
 process.on('uncaughtException', e => {
     logger.error('Uncaught exception: ' + e.stack);
-    sendGroupMessage(732037074, 'Uncaught exception: ' + e.stack);
+    // sendGroupMessage(732037074, 'Uncaught exception: ' + e.stack);
+    sendPrivateMessage(908357702, 'Uncaught exception: ' + e.stack);
     if (!inited) {
         logger.error('Failed while initializing. Shutting down.');
         shutdown(0);
@@ -46,7 +46,8 @@ process.on('uncaughtException', e => {
 
 process.on('unhandledRejection', e => {
     logger.warn('Uncaught rejection: ' + e.stack);
-    sendGroupMessage(732037074, 'Uncaught rejection: ' + e.stack);
+    // sendGroupMessage(732037074, 'Uncaught rejection: ' + e.stack);
+    sendPrivateMessage(908357702, 'Uncaught rejection: ' + e.stack);
     if (!inited) {
         logger.error('Failed while initializing. Shutting down.');
         shutdown(0);
@@ -56,13 +57,6 @@ process.on('unhandledRejection', e => {
 process.on('SIGINT', () => {
     logger.info('Manually terminating.');
     shutdown(0);
-});
-
-const pool = mysql.createPool({
-    host: process.env.DB_HOST,
-    user: process.env.DB_USER,
-    password: process.env.DB_PASS,
-    database: process.env.DB_NAME
 });
 
 const initProm = [];
@@ -106,31 +100,6 @@ const tags = {};
  */
 function registerTag(name, callback) {
     tags[name] = callback;
-}
-
-/**
- * Convert a common text to CQ code
- * @param {string} text Raw text
- * @param {number} userId QQ number
- * @param {number} [groupId=0] Group ID
- * @param {boolean} [protect=false] Use ban-failure message if available. Automatically set to true if groupId is false value
- * @returns {string} Parsed text
- */
-function parse(text, userId, groupId, protect = false) {
-    let alt;
-    text = text
-        .replace(/%([\w_]+)%/g, (...match) => _.defaultTo(process.env[match[1]], ''))
-        .replace(/\[(\w+)(?:=(.*?))?(?<!\\)\]/g, (match, tag, arg) => {
-            if (alt !== undefined) return '';
-            if (!_.has(tags, tag)) return match;
-            let ret = tags[tag](arg, userId, groupId, protect);
-            if (typeof ret === 'object') {
-                if (ret.replaceAll) alt = ret.text;
-                else ret = ret.text;
-            }
-            return ret;
-        });
-    return alt ? alt : text;
 }
 
 const events = {
@@ -347,7 +316,7 @@ function removeListener(listener) {
     _.forEach(type => _.remove(type, ['listener', listener]));
 }
 
-function emit(parameters, listeners, terminate = () => false, format) {
+function emit(parameters, listeners, terminate = () => false, format = res => res) {
     for (let listener of listeners) {
         let ret = listener.listener(parameters);
         if (!terminate(ret)) continue;
@@ -366,14 +335,14 @@ function sendRequest(name, parameters, callback) {
         callback = parameters;
         parameters = {};
     } else if (!parameters) parameters = {};
-    const content = JSON.stringify(snakeCaseKey(parameters));
+    const content = JSON.stringify(parameters);
     logger.trace(name + '?' + content);
     const req = http.request({
-        host: process.env.COOLQ_HOST,
-        port : process.env.COOLQ_PORT,
+        host: process.env.MIRAI_HOST,
+        port : process.env.MIRAI_PORT,
         method : 'POST',
         path: name,
-        headers: {'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(content) }
+        headers: {'Content-Type': 'application/json; charset=utf-8' }
     }, res => {
         if (!callback) return;
         res.setEncoding('utf8');
@@ -393,21 +362,36 @@ function sendRequest(name, parameters, callback) {
 /**
  * Send a private message
  * @param {number} userId QQ number
+ * @param {number?} groupId Group ID
  * @param {string} message Message
  * @param {Object} [parameters] options
  * @param {boolean} [parameters.escape=false] Send as plaintext
  * @param {function(number): void} [callback] Message ID
  */
-function sendPrivateMessage(userId, message, parameters, callback) {
+function sendPrivateMessage(userId, groupId, message, parameters, callback) { // updated
     if (typeof parameters === 'function') {
         callback = parameters;
         parameters = {};
     }
     if (!parameters) parameters = {};
-    sendRequest('/send_private_msg', {
-        userId, message,
-        autoEscape: parameters.escape
-    }, callback ? res => callback(res.message_id) : undefined);
+    if (typeof message === 'string') message = [{
+        type: 'Plain',
+        text: message,
+    }];
+    if (groupId) {
+        sendRequest('/sendTempMessage', {
+            qq: userId,
+            group: groupId,
+            messageChain: message,
+            ...parameters,
+        }, callback);
+    } else {
+        sendRequest('/sendFriendMessage', {
+            target: userId,
+            messageChain: message,
+            ...parameters,
+        }, callback);
+    }
 }
 
 /**
@@ -418,16 +402,21 @@ function sendPrivateMessage(userId, message, parameters, callback) {
  * @param {boolean} [parameters.escape=false] Send as plaintext
  * @param {function(number): void} [callback] Message ID
  */
-function sendGroupMessage(groupId, message, parameters, callback) {
+function sendGroupMessage(groupId, message, parameters, callback) { // updated
     if (typeof parameters === 'function') {
         callback = parameters;
         parameters = {};
     }
     if (!parameters) parameters = {};
-    sendRequest('/send_group_msg', {
-        groupId, message,
-        autoEscape: parameters.escape
-    }, callback ? res => callback(res.message_id) : undefined);
+    if (typeof message === 'string') message = [{
+        type: 'Plain',
+        text: message,
+    }];
+    sendRequest('/sendGroupMessage', {
+        target: groupId,
+        messageChain: message,
+        ...parameters,
+    }, callback);
 }
 
 /**
@@ -478,10 +467,11 @@ function kickUser(userId, groupId, rejectForever) {
  * @param {number} groupId Group ID
  * @param {number} [time=1800] Seconds to ban
  */
-function banUser(userId, groupId, time) {
-    sendRequest('/set_group_ban', {
-        userId, groupId,
-        duration: time,
+function banUser(userId, groupId, time) { // updated
+    sendRequest('/mute', {
+        target: groupId,
+        memberId: userId,
+        time,
     });
 }
 
@@ -599,13 +589,9 @@ let auth = {};
 
 function updateAuthorizationCache() {
     return new Promise((resolve, reject) => {
-        let _auth = {};
-        pool.query('select * from auth', [], (error, result) => {
-            if (error) return reject(error);
-            result.forEach(row => {
-                _.setWith(_auth, [(row.isgroup ? 'group' : 'user') + row.target, row.type], row.expire, Object);
-            });
-            auth = _auth;
+        fs.readFile('conf/auth.json', { encoding: 'utf-8' }, (err, data) => {
+            if (err) return reject(err);
+            auth = JSON.parse(data);
             resolve();
         });
     });
@@ -621,6 +607,8 @@ initProm.push(updateAuthorizationCache());
  */
 function authorized(target, name) {
     if (typeof target != 'string') target = target.toString();
+    if (name) return auth[target].includes(name);
+    return auth[target] || [];
     if (!target.match(/^(group|user)\d+/)) throw new Error('Illegal argument: target must starts with "group" or "user", but was: ' + target);
     if (name) {
         if (target[0] == 'g') return _.get(auth, [target, name], 0) >= new Date();
@@ -635,86 +623,26 @@ function authorized(target, name) {
 }
 
 /**
- * Get when the authorizations will expire or expired. This function won't check the group which the member belongs to.
- * @param {string} target ID of the target. `user` or `group` followed by the QQ number or group number, for example `'group732037074'`.
- * @param {string} [name] Name of the authorization. If not specified, all authorizations will be returned.
- * @returns {undefined|Date|Object.<string,Date>} The expiration date of the authorization(s).
- */
-function getAuthorizationExpires(target, name) {
-    if (typeof target != 'string') target = target.toString();
-    if (!target.match(/(group|user)\d+/)) throw new Error('Illegal argument: target must starts with "group" or "user", but was: ' + target);
-    if (name) return _.get(auth, [target, name]);
-    return _.clone(auth[target]);
-}
-
-/**
  * 
  * @param {string} target ID of the target. `user` or `group` followed by the QQ number or group number, for example `'group732037074'`.
  * @param {string} name Name of the authorization
- * @param {'prolong'|'set'|'cancel'} [type='prolong'] How to update the authorization
- * @param {number} [duration=1] Time to prolong, pass a timestamp in seconds if type is `'set'`
- * @param {'second'|'minute'|'hour'|'day'|'week'|'month'|'quarter'|'year'} [unit='month'] Unit of duration, valid only when type is `'prolong'`
- * @param {function(boolean): void} [callback] Whether operation was successful or not
+ * @param {'set'|'cancel'} [type] How to update the authorization
  */
-function updateAuthorization(target, name, type = 'prolong', duration = 1, unit = 'month', callback) {
-    if (typeof type !== 'string') {
-        callback = unit;
-        unit = duration;
-        duration = type;
-        type = 'prolong';
-    }
-    if (typeof duration !== 'number') {
-        callback = duration;
-        duration = 1;
-    }
-    if (typeof unit !== 'string') {
-        callback = unit;
-        unit = 'month';
-    }
-    const rawtarget = target;
-    if (target.startsWith('group')) target = { target: target.substr(5), isgroup: true };
-    else if (target.startsWith('user')) target = { target: target.substr(4), isgroup: false };
-    else throw new Error('Illegal argument: target must starts with "group" or "user", but was: ' + target);
-    if (['prolong', 'set', 'cancel'].indexOf(type) === -1) throw new Error('Illegal argument: type shoud be one of "prolong", "set", or "cancel", but was: ' + type);
-    let sql;
-    const alreadyExists = _.has(auth, [rawtarget, name]), isauthorized = authorized(rawtarget, name);
-    if (type == 'prolong') {
-        if (['second', 'minute', 'hour', 'day', 'week', 'month', 'quarter', 'year'].indexOf(unit) === -1)
-            throw new Error('Illegal argument: unit must be one of "second", "minute", "hour", "day", "week", "month", "quarter" or "year", but was: ' + unit);
-        sql = {
-            sql: alreadyExists
-                ? 'update auth set expire = timestampadd(?, ?, ?) where target = ? and isgroup = ? and type = ?'
-                : 'insert into auth (expire, target, isgroup, type) values (timestampadd(?, ?, ?), ?, ?, ?)',
-            values: [mysql.raw(unit), duration, isauthorized ? mysql.raw('expire') : mysql.raw('now()'), target.target, target.isgroup, name]
-        };
-    } else if (type == 'set') sql = {
-        sql: alreadyExists
-            ? 'update auth set expire = ? where target = ? and isgroup = ? and type = ?'
-            : 'insert into auth (expire, target, isgroup, type) values (?, ?, ?, ?)',
-        values: [new Date(duration * 1000), target.target, target.isgroup, name]
-    }; else sql = {
-        sql: 'delete from auth where target = ? and isgroup = ? and name = ?',
-        values: [target.target, target.isgroup, name]
-    };
-    pool.query(sql, async err => {
-        await updateAuthorizationCache();
-        if (err) {
-            callback(false);
-            logger.warn(err.sqlMessage);
-        } else callback(true);
-    });
+function updateAuthorization(target, name, type) {
+    if (!auth[target]) auth[target] = [];
+    if (type === 'set') {
+        if (!auth[target].includes(name)) auth[target].push(name);
+    } else if (type === 'cancel') _.pull(auth[target], name);
+    fs.writeFileSync('conf/auth.json', JSON.stringify(auth), { encoding: 'utf-8'});
 }
 
 let permissions = {};
 
-function updatePermissionCache(clear = true) {
+function updatePermissionCache() {
     return new Promise((resolve, reject) => {
-        pool.query('select * from admin', (err, result) => {
+        fs.readFile('conf/permissions.json', { encoding: 'utf-8' }, (err, data) => {
             if (err) return reject(err);
-            if (clear) permissions = {};
-            result.forEach(row => {
-                _.setWith(permissions, [row.qq, row.qqgroup], row.permission, Object);
-            });
+            permissions = JSON.parse(data);
             resolve();
         });
     });
@@ -740,22 +668,12 @@ function getPermission(userId, groupId) {
  */
 function setPermission(userId, groupId, permission) {
     if (permission > 2) groupId = 0;
-    if (permission) pool.query({
-        sql: getPermission(userId, groupId)
-            ? 'update admin set permission = ? where qq = ? and qqgroup = ?'
-            : 'insert into admin (permission, qq, qqgroup) values (?, ?, ?)',
-        values: [permission, userId, groupId]
-    }, err => {
-        if (err) return logger.error(err.message);
-        _.set(permissions, [userId, groupId], permission);
-    });
-    else pool.query('delete from admin where qq = ? and qqgroup = ?', [userId, groupId], err => {
-        if (err) return logger.error(err.message);
-        _.unset(permissions, [userId, groupId]);
-    });
+    if (permission) _.set(permissions, [userId, groupId], permission);
+    else _.unset(permissions, [userId, groupId]);
+    fs.writeFileSync('conf/permissions.json', JSON.stringify(permissions), { encoding: 'utf-8'});
 }
 
-initProm.push(updatePermissionCache(false));
+initProm.push(updatePermissionCache());
 
 const users = {};
 
@@ -775,11 +693,11 @@ function updateGroupList(group, clearOld = true) {
     });
 }
 
-initProm.push(new Promise(resolve => {
-    getGroupList(groups => {
-        Promise.all(_.map(groups, group => updateGroupList(group.groupId, false))).then(resolve);
-    });
-}));
+// initProm.push(new Promise(resolve => {
+//     getGroupList(groups => {
+//         Promise.all(_.map(groups, group => updateGroupList(group.groupId, false))).then(resolve);
+//     });
+// }));
 
 onMemberChange(event => {
     if (event.noticeType == 'group_decrease') _.unset(users, [event.userId, event.groupId]);
@@ -812,42 +730,39 @@ function getActualPermission(userId, groupId) {
 
 module.exports = {
     modules,
-    pool,
     shutdown,
     registerTag,
-    parse,
     // Events
     onPrivateMessage,
     onGroupMessage,
-    onDiscussMessage,
-    onAdminChange,
-    onMemberChange,
-    onNewFriend,
-    onFriendRequest,
-    onJoinGroupRequest,
-    onInviteGroupRequest,
-    onRemoteLifecycle,
-    onHeartbeat,
+    // onDiscussMessage,
+    // onAdminChange,
+    // onMemberChange,
+    // onNewFriend,
+    // onFriendRequest,
+    // onJoinGroupRequest,
+    // onInviteGroupRequest,
+    // onRemoteLifecycle,
+    // onHeartbeat,
     removeListener,
     // Requests
     sendRequest,
     sendPrivateMessage,
     sendGroupMessage,
-    sendDiscussMessage,
-    revokeMessage,
-    kickUser,
+    // sendDiscussMessage,
+    // revokeMessage,
+    // kickUser,
     banUser,
-    banAnonymousUser,
-    leaveGroup,
-    leaveDiscuss,
-    processFriendRequest,
-    processAddGroupRequest,
-    processGroupInvitation,
-    getGroupList,
-    getGroupMembers,
+    // banAnonymousUser,
+    // leaveGroup,
+    // leaveDiscuss,
+    // processFriendRequest,
+    // processAddGroupRequest,
+    // processGroupInvitation,
+    // getGroupList,
+    // getGroupMembers,
     // Permission
     authorized,
-    getAuthorizationExpires,
     updateAuthorization,
     getPermission,
     setPermission,
@@ -870,49 +785,73 @@ Promise.all(initProm).then(() => {
     let data = '';
     request.on('data', chunk => data += chunk);
     request.on('end', () => {
-        let req = camelCaseKey(JSON.parse(data));
+        let req = JSON.parse(data);
         logger.trace(req);
 
         let res;
-        if (req.postType == 'message') {
-            if (req.messageType == 'private') {
-                res = emit(req, events.privateMessage, ret => ret !== false, reply => reply !== true ? ({reply}) : undefined);
-            } else if (req.messageType == 'group') {
-                res = emit(req, events.groupMessage, ret => ret !== false, reply => reply !== true ? ({reply, atSender: false}) : undefined);
-            } else if (req.messageType == 'discuss') {
-                res = emit(req, events.discussMessage, ret => ret !== false, reply => reply !== true ? ({reply, atSender: false}) : undefined);
-            }
-        } else if (req.postType == 'notice') {
-            if (req.noticeType == 'group_admin') {
-                res = emit(req, events.adminChanges);
-            } else if (req.noticeType == 'group_decrease' || req.noticeType == 'group_increase') {
-                res = emit(req, events.memberChanges);
-            } else if (req.noticeType == 'friend_add') {
-                res = emit(req, events.newFriend);
-            }
-        } else if (req.postType == 'request') {
-            if (req.requestType == 'friend') {
-                res = emit(req, events.friendRequest, ret => ret !== undefined, approve => typeof approve === 'string' ? {
-                    approve: true,
-                    remark: approve,
-                } : { approve });
-            } else if (req.requestType == 'group') {
-                res = emit(req, req.subType == 'add' ? events.joinGroupRequest : events.inviteGroupRequest, ret => ret !== undefined, approve => typeof approve === 'string' ? {
-                    approve: false,
-                    reason: approve,
-                } : { approve });
-            }
-        } else if (req.postType == 'meta_event') {
-            if (req.metaEventType == 'lifecycle') {
-                res = emit(req.subType, events.lifecycle);
-            } else if (req.metaEventType == 'heartbeat') {
-                res = emit(req, events.heartbeat);
-            }
-        }
-        if (res) {
-            logger.trace(res);
-            response.write(JSON.stringify(snakeCaseKey(res)));
-        } else response.writeHead(204);
+        if (req.type === 'FriendMessage')
+            res = emit(req, events.privateMessage, ret => ret !== false, reply => reply !== true ? ({
+                command: 'sendFriendMessage',
+                content: {
+                    target: req.sender.id,
+                    ...(reply.messageChain ? reply : { messageChain: reply }),
+                },
+            }) : undefined);
+        else if (req.type === 'TempMessage')
+            res = emit(req, events.privateMessage, ret => ret !== false, reply => reply !== true ? ({
+                command: 'sendTempMessage',
+                content: {
+                    group: req.sender.group.id,
+                    qq: req.sender.id,
+                    ...(reply.messageChain ? reply : { messageChain: reply }),
+                },
+            }) : undefined);
+        else if (req.type === 'GroupMessage')
+            res = emit(req, events.groupMessage, ret => ret !== false, reply => reply !== true ? ({
+                command: 'sendGroupMessage',
+                content: {
+                    target: req.sender.group.id,
+                    ...(reply.messageChain ? reply : { messageChain: reply }),
+                },
+            }) : undefined);
+        // if (req.postType == 'message') {
+        //     if (req.messageType == 'private') {
+        //         res = emit(req, events.privateMessage, ret => ret !== false, reply => reply !== true ? ({reply}) : undefined);
+        //     } else if (req.messageType == 'group') {
+        //         res = emit(req, events.groupMessage, ret => ret !== false, reply => reply !== true ? ({reply, atSender: false}) : undefined);
+        //     } else if (req.messageType == 'discuss') {
+        //         res = emit(req, events.discussMessage, ret => ret !== false, reply => reply !== true ? ({reply, atSender: false}) : undefined);
+        //     }
+        // } else if (req.postType == 'notice') {
+        //     if (req.noticeType == 'group_admin') {
+        //         res = emit(req, events.adminChanges);
+        //     } else if (req.noticeType == 'group_decrease' || req.noticeType == 'group_increase') {
+        //         res = emit(req, events.memberChanges);
+        //     } else if (req.noticeType == 'friend_add') {
+        //         res = emit(req, events.newFriend);
+        //     }
+        // } else if (req.postType == 'request') {
+        //     if (req.requestType == 'friend') {
+        //         res = emit(req, events.friendRequest, ret => ret !== undefined, approve => typeof approve === 'string' ? {
+        //             approve: true,
+        //             remark: approve,
+        //         } : { approve });
+        //     } else if (req.requestType == 'group') {
+        //         res = emit(req, req.subType == 'add' ? events.joinGroupRequest : events.inviteGroupRequest, ret => ret !== undefined, approve => typeof approve === 'string' ? {
+        //             approve: false,
+        //             reason: approve,
+        //         } : { approve });
+        //     }
+        // } else if (req.postType == 'meta_event') {
+        //     if (req.metaEventType == 'lifecycle') {
+        //         res = emit(req.subType, events.lifecycle);
+        //     } else if (req.metaEventType == 'heartbeat') {
+        //         res = emit(req, events.heartbeat);
+        //     }
+        // }
+        if (res) logger.trace(res);
+        else res = { command: '', content: {} };
+        response.write(JSON.stringify(res));
         response.end();
     });
 }).listen(process.env.PORT, process.env.HOST, () => {

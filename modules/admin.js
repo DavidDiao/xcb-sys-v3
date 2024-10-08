@@ -1,6 +1,7 @@
 const blocked = {};
 
 function messageListener(event) {
+    return false;
     let match;
     const permission = getPermission(event.userId, event.groupId);
 
@@ -97,19 +98,19 @@ function messageListener(event) {
         }
     }
 
-    if (permission >= 3 && (match = event.message.match(/^(个人|群)(\d+)续费(?:(.*?) )?(\d+)([月年])?$/u))) {
-        const target = (match[1] == '群' ? 'group' : 'user') + match[2];
-        let authtype = match[3];
-        if (!authtype) {
-            let auths = _.toPairs(getAuthorizationExpires(target));
-            if (auths.length != 1) return '请指定授权类型';
-            authtype = auths[0][0];
-        }
-        updateAuthorization(target, authtype, 'prolong', parseInt(match[4]), match[5] == '年' ? 'year' : 'month', success => {
-            sendPrivateMessage(event.userId, success ? '续费成功，有效期至' + getAuthorizationExpires(target, authtype).toLocaleString() : '续费失败');
-        });
-        return true;
-    }
+    // if (permission >= 3 && (match = event.message.match(/^(个人|群)(\d+)续费(?:(.*?) )?(\d+)([月年])?$/u))) {
+    //     const target = (match[1] == '群' ? 'group' : 'user') + match[2];
+    //     let authtype = match[3];
+    //     if (!authtype) {
+    //         let auths = _.toPairs(getAuthorizationExpires(target));
+    //         if (auths.length != 1) return '请指定授权类型';
+    //         authtype = auths[0][0];
+    //     }
+    //     updateAuthorization(target, authtype, 'prolong', parseInt(match[4]), match[5] == '年' ? 'year' : 'month', success => {
+    //         sendPrivateMessage(event.userId, success ? '续费成功，有效期至' + getAuthorizationExpires(target, authtype).toLocaleString() : '续费失败');
+    //     });
+    //     return true;
+    // }
 
     return false;
 }
@@ -143,6 +144,7 @@ function blockAndBan(userId, groupId, duration) {
  * @returns {boolean} Whether the user was blocked or not
  */
 function isBlocked(userId, groupId = 0) {
+    return false;
     return _.get(blocked, [userId, groupId], 0) > new Date() && getPermission(userId, groupId) == 0;
 }
 
@@ -191,6 +193,6 @@ module.exports = {
 };
 
 const _ = require('lodash');
-const { sendPrivateMessage, sendGroupMessage, onPrivateMessage, onGroupMessage, removeListener, banUser, updateAuthorization, getAuthorizationExpires, getPermission, setPermission, getActualPermission } = require('..');
+const { sendPrivateMessage, sendGroupMessage, onPrivateMessage, onGroupMessage, removeListener, banUser, updateAuthorization, getPermission, setPermission, getActualPermission } = require('..');
 const { setRegularSchedule, removeSchedule } = require('./schedule');
 const { parse } = require('./parser');

@@ -10,6 +10,7 @@ let upstreams = [];
 const logger = log4js.getLogger('upstream');
 
 function listener(event) {
+    return false;
     const auths = authorized('group' + event.groupId);
     return upstreams.some(upstream => upstream.auth.some(auth => {
         if (auths.has(auth)) {
